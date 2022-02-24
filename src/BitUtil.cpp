@@ -15,7 +15,11 @@
  */
 
 #include "BitUtil.h"
+#ifdef NEON
+#include <arm_neon.h>
+#else
 #include <immintrin.h>
+#endif
 #include "Exceptions.h"
 #include "ProcessBase.h"
 
@@ -58,7 +62,10 @@ uint64_t getBitField(const char* data, int32_t numBits, int32_t& lastBit) {
 }
 } // namespace
 
-__attribute__((__target__("bmi2"))) void scatterBits(
+#ifndef NEON
+__attribute__((__target__("bmi2")))
+#endif
+void scatterBits(
     int32_t numSource,
     int32_t numTarget,
     const char* source,
@@ -84,7 +91,11 @@ __attribute__((__target__("bmi2"))) void scatterBits(
           *(reinterpret_cast<const uint64_t*>(maskAsBytes + lowByte));
       int32_t consume = __builtin_popcountll(mask);
       uint64_t bits = getBitField(source, consume, numSource);
+#ifdef NEON
+      *reinterpret_cast<uint64_t*>(target + lowByte) = ( ( bits >> 62 ) & 0b10 ) | ( bits >> 63 );
+#else
       *reinterpret_cast<uint64_t*>(target + lowByte) = _pdep_u64(bits, mask);
+#endif
     } else {
       auto writeMask = bits::lowMask(numBitsToWrite);
       uint64_t mask =
@@ -93,7 +104,11 @@ __attribute__((__target__("bmi2"))) void scatterBits(
       int32_t consume = __builtin_popcountll(mask);
       uint64_t bits = getBitField(source, consume, numSource);
       auto targetPtr = reinterpret_cast<uint64_t*>(target + lowByte);
+#ifdef NEON
+      uint64_t newBits = ( ( bits >> 62 ) & 0b10 ) | ( bits >> 63 );
+#else
       uint64_t newBits = _pdep_u64(bits, mask);
+#endif
       *targetPtr = (*targetPtr & ~writeMask) | (newBits & writeMask);
     }
     VELOX_DCHECK_GE(numSource, 0);

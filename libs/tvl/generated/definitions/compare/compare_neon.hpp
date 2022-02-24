@@ -70,7 +70,7 @@ namespace tvl {
             typename Vec::register_type  vec_data, 
             typename Vec::register_type  vec_min, 
             typename Vec::register_type  vec_max
-         ) {return vandq_s64( vcgeq_s64( vec_data, vec_min ), vcleq_s64( vec_data, vec_max ) );
+         ) {return vandq_u64( vcgeq_s64( vec_data, vec_min ), vcleq_s64( vec_data, vec_max ) );
          }
       };
    } // end of namespace details for template specialization of between_inclusive_impl for neon using int64_t.

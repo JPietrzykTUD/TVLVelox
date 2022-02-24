@@ -116,8 +116,12 @@ bool hasAvx2() {
 }
 
 bool hasBmi2() {
-//  return bmi2CpuFlag && FLAGS_bmi2;
+#ifdef NEON
    return false;
+#else
+   return true;
+#endif
+//  return bmi2CpuFlag && FLAGS_bmi2;
 }
 
 } // namespace process

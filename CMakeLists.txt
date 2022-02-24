@@ -11,7 +11,14 @@ set(POSITION_INDEPENDENT_CODE True)
 
 set(CMAKE_CXX_STANDARD 20)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DSSE -march=native -mavx512f -mavx512dq -mavx2 -mavx -msse4.2 -O3")
+execute_process(COMMAND uname -p WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE PLATFORM OUTPUT_STRIP_TRAILING_WHITESPACE)
+if("${PLATFORM}" STREQUAL "aarch64")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNEON -mabi=lp64 -march=armv8.2-a+lse -O3")
+else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -mavx512f -mavx512dq -mavx2 -mavx -msse4.2 -O3")
+endif()
+message(STATUS "Platform: ${PLATFORM}")
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D HAS_UNCAUGHT_EXCEPTIONS")
 
 set(Boost_USE_MULTITHREADED TRUE)
@@ -90,6 +97,7 @@ file(GLOB SOURCES
     src/*.cpp
 )
 
+message(STATUS "files: ${SOURCES}")
 add_executable(VeloxPoc main.cpp ${SOURCES})
 
 target_link_libraries(

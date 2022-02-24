@@ -24,22 +24,25 @@
 #ifndef TUD_D2RG_TVL_LIB_GENERATED_TVL_GENERATED_HPP
 #define TUD_D2RG_TVL_LIB_GENERATED_TVL_GENERATED_HPP
 
-//#include "extensions/arm/neon.hpp"
+#ifdef NEON
+#include "extensions/arm/neon.hpp"
+#include "definitions/compare/compare_neon.hpp"
+#include "definitions/mask/mask_neon.hpp"
+#include "definitions/io/io_neon.hpp"
+#else
 #include "extensions/intel/sse.hpp"
 #include "extensions/intel/avx2.hpp"
 #include "extensions/intel/avx512.hpp"
 #include "definitions/compare/compare_avx512.hpp"
 #include "definitions/compare/compare_avx2.hpp"
 #include "definitions/compare/compare_sse.hpp"
-//#include "definitions/compare/compare_neon.hpp"
 #include "definitions/mask/mask_avx512.hpp"
 #include "definitions/mask/mask_avx2.hpp"
 #include "definitions/mask/mask_sse.hpp"
-//#include "definitions/mask/mask_neon.hpp"
 #include "definitions/calc/calc_avx512.hpp"
 #include "definitions/io/io_avx512.hpp"
 #include "definitions/io/io_avx2.hpp"
 #include "definitions/io/io_sse.hpp"
-//#include "definitions/io/io_neon.hpp"
+#endif
 
 #endif //TUD_D2RG_TVL_LIB_GENERATED_TVL_GENERATED_HPP

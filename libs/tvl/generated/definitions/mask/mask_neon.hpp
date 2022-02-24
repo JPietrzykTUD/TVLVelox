@@ -78,7 +78,7 @@ namespace tvl {
       struct to_vector_impl< simd< int64_t, neon  >, Idof > {
          using Vec = simd< int64_t, neon  >;
          static constexpr bool native_supported() {
-            return false;
+            return true;
          }
    /*
     * @brief Forms an vector register from an integral where all bits are set in a lane if the corresponding mask bit is set to 1.
@@ -86,12 +86,10 @@ namespace tvl {
     * @param mask Vector mask register containing mask style data.
     * @return Integral value representing the vector mask register.
     */
-         [[nodiscard]] TVL_NO_NATIVE_SUPPORT_WARNING
+         [[nodiscard]] 
          TVL_FORCE_INLINE static typename Vec::register_type apply(
             typename Vec::mask_type  mask
-         ) {
-            static_assert( !std::is_same_v< Idof, native >, "The primitive to_vector is not supported by your hardware natively while it is forced by using native" );
-            return mask; //mask is a vector already.
+         ) {return vreinterpretq_s64_u64( mask ); //mask is a vector already.
          }
       };
    } // end of namespace details for template specialization of to_vector_impl for neon using int64_t.
@@ -101,7 +99,7 @@ namespace tvl {
       struct mask_reduce_impl< simd< int64_t, neon  >, Idof > {
          using Vec = simd< int64_t, neon  >;
          static constexpr bool native_supported() {
-            return false;
+            return true;
          }
    /*
     * @brief Masks out every non relevant bit.
@@ -109,12 +107,10 @@ namespace tvl {
     * @param mask Integral value containing n (set) bits.
     * @return Integral value with only relevant bits set (or not).
     */
-         [[nodiscard]] TVL_NO_NATIVE_SUPPORT_WARNING
+         [[nodiscard]] 
          TVL_FORCE_INLINE static typename Vec::base_type apply(
             typename Vec::base_type  mask
-         ) {
-            static_assert( !std::is_same_v< Idof, native >, "The primitive mask_reduce is not supported by your hardware natively while it is forced by using native" );
-            return mask & 0x3;
+         ) {return mask & 0x3;
          }
       };
    } // end of namespace details for template specialization of mask_reduce_impl for neon using int64_t.

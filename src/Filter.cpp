@@ -57,18 +57,12 @@ namespace facebook::velox::common{
    }
 
    BigintValuesUsingHashTable::BigintValuesUsingHashTable(
-      int64_t min, int64_t max, const std::vector< int64_t > & values, bool nullAllowed
+      int64_t min, int64_t max, const std::vector<int64_t> & values, bool nullAllowed
    )
       : Filter( true, nullAllowed, FilterKind::kBigintValuesUsingHashTable ), min_( min ), max_( max ), values_( values ){
       constexpr int32_t kPaddingElements = 4;
-      if( min >= max )
-         {
-            throw "min must be less than max";
-         }
-      if( values.size( ) <= 1 )
-         {
-            throw "values must contain at least 2 entries";
-         }
+      VELOX_CHECK( min < max, "min must be less than max" );
+      VELOX_CHECK( values.size( ) > 1, "values must contain at least 2 entries" );
 
       // Size the hash table to be 2+x the entry count, e.g. 10 entries
       // gets 1 << log2 of 50 == 32. The filter is expected to fail often so we
@@ -130,52 +124,43 @@ namespace facebook::velox::common{
          }
       return false;
    }
-
-   register_type BigintValuesUsingHashTable::test( register_type x ){
-
-      auto rangeMask =
-         tvl::between_inclusive< vecext >(
-            x, tvl::set1< vecext >( min_ ), tvl::set1< vecext >( max_ )
-         );
-
-      if( tvl::to_integral< vecext >( rangeMask ) == 0 )
+#ifndef NEON
+   simdutil::__m256i BigintValuesUsingHashTable::test4x64( simdutil::__m256i x ){
+      using V64 = simd::Vectors< int64_t >;
+      auto rangeMask = V64::compareGt( V64::setAll( min_ ), x )|
+                       V64::compareGt( x, V64::setAll( max_ ) );
+      if( V64::compareResult( rangeMask ) == V64::kAllTrue )
          {
-            return tvl::set1< vecext >( 0 );
+            return V64::setAll( 0 );
          }
       if( containsEmptyMarker_ )
          {
-            return Filter::test( x );
+            return Filter::test4x64( x );
          }
-
+      rangeMask ^= -1;
       auto indices = x*M&sizeMask_;
-      auto const emptyMarkerVec = tvl::set1< vecext >( kEmptyMarker );
-      auto data = tvl::gather< vecext >(
-         emptyMarkerVec, hashTable_.data( ), indices, rangeMask
+      simdutil::__m256i data = _mm256_mask_i64gather_epi64(
+         V64::setAll( kEmptyMarker ), reinterpret_cast<const long long int *>(hashTable_.data( )), indices, rangeMask, 8
       );
       // The lanes with kEmptyMarker missed, the lanes matching x hit and the other
       // lanes must check next positions.
 
-      auto result = tvl::equal< vecext >( x, data );
-      auto missed = tvl::equal< vecext >( data, emptyMarkerVec );
-
-      uint16_t unresolved = tvl::mask_reduce< vecext >(
-         ~tvl::to_integral< vecext >( result )&
-         ~tvl::to_integral< vecext >( missed )
+      auto result = V64::compareEq( x, data );
+      auto missed = V64::compareEq( data, V64::setAll( kEmptyMarker ) );
+      uint16_t unresolved = V64::compareBitMask(
+         ~V64::compareResult( result )&~V64::compareResult( missed )
       );
-
       if( !unresolved )
          {
-            return tvl::to_vector< vecext >( result );
+            return result;
          }
-      int64_t indicesArray[vecext::vector_element_count()];
-      int64_t valuesArray[vecext::vector_element_count()];
-      int64_t resultArray[vecext::vector_element_count()];
-
-      * reinterpret_cast<register_type *>(indicesArray) = indices+1;
-      * reinterpret_cast<register_type *>(valuesArray) = x;
-      * reinterpret_cast<register_type *>(resultArray) = tvl::to_vector< vecext >( result );
-      auto allEmpty = tvl::set1< vecext >( kEmptyMarker );
-
+      int64_t indicesArray[4];
+      int64_t valuesArray[4];
+      int64_t resultArray[4];
+      * reinterpret_cast<V64::TV *>(indicesArray) = indices+1;
+      * reinterpret_cast<V64::TV *>(valuesArray) = x;
+      * reinterpret_cast<V64::TV *>(resultArray) = result;
+      auto allEmpty = V64::setAll( kEmptyMarker );
       while( unresolved )
          {
             auto lane = bits::getAndClearLastSetBit( unresolved );
@@ -183,19 +168,17 @@ namespace facebook::velox::common{
             // not empty) until finding hit or empty.
             int64_t index = indicesArray[ lane ];
             int64_t value = valuesArray[ lane ];
-            auto allValue = tvl::set1< vecext >( value );
+            auto allValue = V64::setAll( value );
             for( ;; )
                {
-                  auto line = tvl::loadu< vecext >(
-                     hashTable_.data( )+index
-                  );
+                  auto line = V64::load( hashTable_.data( )+index );
 
-                  if( tvl::to_integral< vecext >( tvl::equal< vecext >( line, allValue ) ) )
+                  if( V64::compareResult( V64::compareEq( line, allValue ) ) )
                      {
                         resultArray[ lane ] = -1;
                         break;
                      }
-                  if( tvl::to_integral< vecext >( tvl::equal< vecext >( line, allEmpty ) ) )
+                  if( V64::compareResult( V64::compareEq( line, allEmpty ) ) )
                      {
                         resultArray[ lane ] = 0;
                         break;
@@ -207,9 +190,23 @@ namespace facebook::velox::common{
                      }
                }
          }
-      return tvl::loadu< vecext >( resultArray );
+      return V64::load( & resultArray );
    }
 
+//   simdutil::__m256si BigintValuesUsingHashTable::test8x32( simdutil::__m256i x ){
+//       Calls 4x64 twice since the hash table is 64 bits wide in any
+//       case. A 32-bit hash table would be possible but all the use
+//       cases seen are in the 64 bit range.
+//      using V32 = simd::Vectors< int32_t >;
+//      using V64 = simd::Vectors< int64_t >;
+//      auto x8x32 = reinterpret_cast<V32::TV>(x);
+//      auto first =
+//         V64::compareBitMask( V64::compareResult( test4x64( V32::as4x64< 0 >( x8x32 ) ) ) );
+//      auto second =
+//         V64::compareBitMask( V64::compareResult( test4x64( V32::as4x64< 1 >( x8x32 ) ) ) );
+//      return V32::mask( first|( second<<4 ) );
+//   }
+#endif
    bool BigintValuesUsingHashTable::testInt64Range(
       int64_t min, int64_t max, bool hasNull
    ) const{
@@ -236,55 +233,7 @@ namespace facebook::velox::common{
       return max >= * it;
    }
 
-   std::unique_ptr< Filter > createBigintValues(
-      const std::vector< int64_t > & values, bool nullAllowed
-   ){
-      int64_t min = values[ 0 ];
-      int64_t max = values[ 0 ];
-      for( int i = 1; i < values.size( ); ++i )
-         {
-            if( values[ i ] > max )
-               {
-                  max = values[ i ];
-               }else if( values[ i ] < min )
-               {
-                  min = values[ i ];
-               }
-         }
-      return std::make_unique< BigintValuesUsingHashTable >(
-         min, max, values, nullAllowed
-      );
-   }
-
-   namespace{
-      int compareRanges( const char * lhs, size_t length, const std::string & rhs ){
-         int size = std::min( length, rhs.length( ) );
-         int compare = memcmp( lhs, rhs.data( ), size );
-         if( compare )
-            {
-               return compare;
-            }
-         return length-rhs.size( );
-      }
-   } // namespace
-
-
-
-   namespace{
-      int32_t binarySearch( const std::vector< int64_t > & values, int64_t value ){
-         auto it = std::lower_bound( values.begin( ), values.end( ), value );
-         if( it == values.end( ) || * it != value )
-            {
-               return -std::distance( values.begin( ), it )-1;
-            }else
-            {
-               return std::distance( values.begin( ), it );
-            }
-      }
-   } // namespace
-
-
-   std::unique_ptr< Filter > BigintValuesUsingHashTable::mergeWith(
+   std::unique_ptr<Filter> BigintValuesUsingHashTable::mergeWith(
       const Filter * other
    ) const{
       switch( other->kind( ) )
@@ -302,7 +251,7 @@ namespace facebook::velox::common{
          }
    }
 
-   std::unique_ptr< Filter > BigintValuesUsingHashTable::mergeWith(
+   std::unique_ptr<Filter> BigintValuesUsingHashTable::mergeWith(
       int64_t min, int64_t max, const Filter * other
    ) const{
       bool bothNullAllowed = nullAllowed_ && other->testNull( );
@@ -325,13 +274,24 @@ namespace facebook::velox::common{
       return createBigintValues( valuesToKeep, bothNullAllowed );
    }
 
-   namespace{
-// compareResult = left < right for upper, right < left for lower
-      bool mergeExclusive( int compareResult, bool left, bool right ){
-         return compareResult == 0 ? ( left || right )
-                                   : ( compareResult < 0 ? left : right );
-      }
-   } // namespace
+   std::unique_ptr< Filter > createBigintValues(
+      const std::vector< int64_t > & values, bool nullAllowed
+   ) {
+      int64_t min = values[ 0 ];
+      int64_t max = values[ 0 ];
+      for( int i = 1; i < values.size( ); ++i )
+         {
+            if( values[ i ] > max )
+               {
+                  max = values[ i ];
+               }else if( values[ i ] < min )
+               {
+                  min = values[ i ];
+               }
+         }
+      return std::make_unique< BigintValuesUsingHashTable >(
+         min, max, values, nullAllowed
+      );
+   }
 
-
-} // namespace facebook::velox::common
+}
