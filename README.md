@@ -1,2 +1,1 @@
-To build with AVX2 change -DSSE to -DAVX2 in CMakeLists.txt.
-To build with AVX2 change -DSSE to -DAVX512 in CMakeLists.txt.
+Automatically builds with AVX512, AVX2 and SSE on Intel and Neon on ARM.
